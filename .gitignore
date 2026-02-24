@@ -1,0 +1,4 @@
+.ipyn*
+__pycache__
+*pyc
+*ipynb
