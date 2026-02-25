@@ -24,5 +24,5 @@ class FetcherArgs:
 class FilterArgs:
     max_workers: int = 4
     fetcher_args: FetcherArgs = field(default_factory=FetcherArgs)
-    analysis_delay: float = 0.0  # 个股分析与大盘分析之间的延迟
+    analysis_delay: float = 1.0  # 个股分析与大盘分析之间的延迟
     max_workers: int = 3  # 低并发防封禁
