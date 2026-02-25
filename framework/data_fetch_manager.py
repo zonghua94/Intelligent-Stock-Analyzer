@@ -136,7 +136,7 @@ class DataFetcherManager:
             DataFetchError: 所有数据源都失败时抛出
         """
         errors = []
-        
+        time.sleep(random.uniform(2, 5))
         for fetcher in self._fetchers:
             try:
                 logger.info(f"尝试使用 [{fetcher.name}] 获取 {stock_code}...")
