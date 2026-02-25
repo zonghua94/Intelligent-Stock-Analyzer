@@ -9,14 +9,10 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: '运行模式'
+        description: 'step'
         required: true
-        default: 'full'
-        type: choice
-        options:
-          - full          # 完整分析（股票+大盘）
-          - market-only   # 仅大盘复盘
-          - stocks-only   # 仅股票分析
+        default: '0'
+        type: string
 
 # 并发控制：同一时间只运行一个分析任务
 concurrency:
@@ -49,4 +45,4 @@ jobs:
 
       - name: 开始执行
         run: |
-          python test.py
+          STEP="${{ github.event.inputs.step }}" python test.py
