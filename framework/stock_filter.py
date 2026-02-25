@@ -69,7 +69,7 @@ class StockFilter:
 
     def income_filter(self, stock_list:List[str]) -> List[str]:
         all_income_data = []
-        batch = self.args.batch
+        batch = self.args.request_batch
         total_iter = (len(stock_list) - 1) // batch + 1
         for step in total_iter:
             start = batch * step
