@@ -4,6 +4,33 @@ import os
 from typing import List, Optional
 from dataclasses import dataclass, field
 
+@dataclass
+class NotificationArgs:
+    dingtalk_token: Optional[str] = None
+    wechat_webhook_url: Optional[str] = None
+    feishu_webhook_url: Optional[str] = None
+    wechat_msg_type: str = "markdown"
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+    telegram_message_thread_id: Optional[int] = None
+    email_sender: Optional[str] = None
+    email_sender_name: Optional[str] = None
+    email_password: Optional[str] = None
+    email_receivers: Optional[List[str]] = None
+    pushover_user_key: Optional[str] = None
+    pushover_api_token: Optional[str] = None
+    pushplus_token: Optional[str] = None
+    serverchan3_sendkey: Optional[str] = None
+    custom_webhook_urls: Optional[List[str]] = None
+    custom_webhook_bearer_token: Optional[str] = None
+    discord_bot_token: Optional[str] = None
+    discord_main_channel_id: Optional[str] = None
+    discord_webhook_url: Optional[str] = None
+    astrbot_url: Optional[str] = None
+    astrbot_token: Optional[str] = None
+    feishu_max_bytes: int = 8192
+    wechat_max_bytes: int = 8192
+    
 
 @dataclass
 class FetcherArgs:
@@ -24,6 +51,7 @@ class FetcherArgs:
 class FilterArgs:
     max_workers: int = 4
     fetcher_args: FetcherArgs = field(default_factory=FetcherArgs)
+    notifier_args: NotificationArgs = field(default_factory=NotificationArgs)
     analysis_delay: float = 0.0  # 个股分析与大盘分析之间的延迟
     max_workers: int = 3  # 低并发防封禁
     request_batch: int = 200  # 以batch方式请求，一次请求最多200只股票
