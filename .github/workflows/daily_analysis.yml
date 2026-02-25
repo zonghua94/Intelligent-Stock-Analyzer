@@ -44,5 +44,8 @@ jobs:
           pip install -r requirements.txt
 
       - name: 开始执行
+        env:
+          SERVERCHAN3_SENDKEY: ${{ secrets.SERVERCHAN3_SENDKEY }}
+          STEP: ${{ github.event.inputs.step }}
         run: |
-          STEP="${{ github.event.inputs.step }}" python test.py
+           python test.py
