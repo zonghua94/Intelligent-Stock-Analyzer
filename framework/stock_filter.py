@@ -2,6 +2,7 @@
 
 import logging
 import time
+import random
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
@@ -100,7 +101,7 @@ class StockFilter:
                     except Exception as e:
                         logger.error(f"[{code}] 任务执行失败: {e}")
             if not step == total_iter - 1:
-                logger.info(f"处理完成，剩余{len(stock_list) - batch * (step + 1)}只股票")
+                logger.info(f"处理完成 {batch * (step + 1)} 只股票，剩余{len(stock_list) - batch * (step + 1)}只股票")
                 time.sleep(random.uniform(1, 3) * 60)
 
         df_filtered = pd.DataFrame(all_income_data)
