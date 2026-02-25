@@ -102,7 +102,7 @@ class StockFilter:
                         logger.error(f"[{code}] 任务执行失败: {e}")
             if not step == total_iter - 1:
                 logger.info(f"处理完成 {batch * (step + 1)} 只股票，剩余{len(stock_list) - batch * (step + 1)}只股票")
-                time.sleep(random.uniform(1, 3) * 60)
+                time.sleep(random.uniform(1, 2) * 60)
 
         df_filtered = pd.DataFrame(all_income_data)
         df_filtered = df_filtered[df_filtered['income_inc'] >= BASE_INCOME_INCREASE]
