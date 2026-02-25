@@ -3,6 +3,7 @@
 import logging
 import random
 import time
+import random
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional, List, Tuple, Dict, Any
@@ -301,6 +302,8 @@ class DataFetcherManager:
         # primary_quote holds the first successful result; we may supplement
         # missing fields (volume_ratio, turnover_rate, etc.) from later sources.
         primary_quote = None
+        # 随机等待 2-5 秒，以免封禁
+        time.sleep(random.uniform(2, 5))
         
         for source in source_priority:
             source = source.strip().lower()
