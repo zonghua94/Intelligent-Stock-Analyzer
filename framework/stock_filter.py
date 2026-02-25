@@ -71,7 +71,7 @@ class StockFilter:
         all_income_data = []
         batch = self.args.request_batch
         total_iter = (len(stock_list) - 1) // batch + 1
-        for step in total_iter:
+        for step in range(total_iter):
             start = batch * step
             end = min(batch * (step + 1), len(stock_list))
             batch_stock_list = stock_list[start:end]
