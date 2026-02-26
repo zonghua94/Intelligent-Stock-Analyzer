@@ -82,7 +82,7 @@ def _calculate_metrics(df: pd.DataFrame) -> pd.DataFrame:
     result['ema50'] = ema50.iloc[-1]
     result['ema200'] = ema200.iloc[-1]
     # ema200斜率
-    result['ema200_slope'] = (ema200.iloc[-1] - ema200.iloc[-2]) / ema200.iloc[-2] * 100
+    result['ema200_slop'] = (ema200.iloc[-1] - ema200.iloc[-2]) / ema200.iloc[-2] * 100
     # ema5 上穿 ema10的金叉, 下穿的死叉
     is_golden_cross = ((ema5 > ema10) & (ema5.shift(1) <= ema10.shift(1)))
     is_death_cross = ((ema5 < ema10) & (ema5.shift(1) >= ema10.shift(1)))
