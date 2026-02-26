@@ -21,6 +21,7 @@ import json
 import smtplib
 import re
 import markdown2
+import pandas as pd
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from email.mime.text import MIMEText
@@ -340,6 +341,65 @@ class NotificationService:
             content: Markdown 格式内容
         """
         return self._send_via_source_context(content)
+    
+    def send_filter_report(self, results: pd.DataFrame, report_date: Optional[str] = None):
+        report = self.generate_filter_report(results, report_date)
+        return self.send(report)
+
+    def generate_filter_report(
+        self,
+        results: pd.DataFrame,
+        report_date: Optional[str] = None
+    ) -> str:
+        """
+        Returns:
+            Markdown 格式的日报内容
+        """
+        if report_date is None:
+            report_date = datetime.now().strftime('%Y-%m-%d')
+
+        # 标题
+        report_lines = [
+            f"# 📅 {report_date} 股票筛选报告",
+            "",
+            f"> 共过滤出 **{len(results)}** 只股票 | 报告生成时间：{datetime.now().strftime('%H:%M:%S')}",
+            "",
+            "---",
+            "",
+        ]
+        
+        results = results.copy()
+        results = results.sort_values('风险分', ascending=True).reset_index(drop=True)
+        risk0_codes = results[results['风险分'] == 0]['code'].tolist()
+        risk1_codes = results[results['风险分'] == 1]['code'].tolist()
+        risk2_codes = results[results['风险分'] == 2]['code'].tolist()
+        
+        report_lines.extend([
+            "## 📊 风险评分汇总",
+            "",
+            "| 风险分 | 数值 | 代码列表 |",
+            "|------|------|------|",
+            f"| 🟢 0(无风险项) | **{len(risk0_codes)}** 只 | {risk0_codes} |",
+            f"| 🟡 1(轻度风险/正常建仓) | **{len(risk1_codes)}** 只 | {risk1_codes} |",
+            f"| 🔴 2(中度风险/仅50%仓位) | **{len(risk2_codes)}** 只 | {risk2_codes} |",
+            "",
+            "---",
+            "",
+            "## 📈 详细分析结果报告",
+            "",
+            f"{results.to_markdown(index=False)}",
+            "",
+            "---",
+            "",
+        ])
+        
+        # 底部信息（去除免责声明）
+        report_lines.extend([
+            "",
+            f"*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+        ])
+        
+        return "\n".join(report_lines)
     
     def generate_daily_report(
         self,
