@@ -16,7 +16,7 @@ class SingleLevelFilter(logging.Filter):
 
 
 class Logger:
-    def __init__(self, name=__file__, level=logging.DEBUG):
+    def __init__(self, name=__file__, level=logging.INFO):
         stdout_handler = logging.StreamHandler(sys.stdout)
         stderr_handler = logging.StreamHandler(sys.stderr)
         stdout_handler.addFilter(SingleLevelFilter(logging.INFO, False))

@@ -71,18 +71,18 @@ def _calculate_metrics(df: pd.DataFrame) -> pd.DataFrame:
     # 当日, 20日成交额
     result['amount'] = df['amount'].iloc[-1]
     result['amount_ma20'] = df['amount'].rolling(window=20).mean().iloc[-1]
-    # ema5, ema10, ema50, ema200
+    # ema5, ema10, ema50, ema120
     ema5 = df['close'].ewm(span=5, adjust=False).mean()
     ema10 = df['close'].ewm(span=10, adjust=False).mean()
     ema50 = df['close'].ewm(span=50, adjust=False).mean()
-    ema200 = df['close'].ewm(span=200, adjust=False).mean()
+    ema120 = df['close'].ewm(span=120, adjust=False).mean()
     result['close'] = df['close'].iloc[-1]
     result['ema5'] = ema5.iloc[-1]
     result['ema10'] = ema10.iloc[-1]
     result['ema50'] = ema50.iloc[-1]
-    result['ema200'] = ema200.iloc[-1]
-    # ema200斜率
-    result['ema200_slope'] = (ema200.iloc[-1] - ema200.iloc[-2]) / ema200.iloc[-2] * 100
+    result['ema120'] = ema120.iloc[-1]
+    # ema120斜率
+    result['ema120_slop'] = (ema120.iloc[-1] - ema120.iloc[-2]) / ema120.iloc[-2] * 100
     # ema5 上穿 ema10的金叉, 下穿的死叉
     is_golden_cross = ((ema5 > ema10) & (ema5.shift(1) <= ema10.shift(1)))
     is_death_cross = ((ema5 < ema10) & (ema5.shift(1) >= ema10.shift(1)))
@@ -105,8 +105,8 @@ def _calculate_metrics(df: pd.DataFrame) -> pd.DataFrame:
     )
     macd_histogram = macd_calc.macd_diff() # Histogram = DIF - DEA
     result['macd_histogram'] = float(macd_histogram.iloc[-1])
-    # ema200偏离比例
-    result['ema200_deviation_rate'] = ((result['ema200'] - result['close']) / result['ema200']) * 100
+    # ema120偏离比例
+    result['ema120_deviation_rate'] = ((result['ema120'] - result['close']) / result['ema120']) * 100
     # 20日, 60日涨幅
     current_price = df["close"].iloc[-1]
     price_20d_ago = df["close"].iloc[-21]

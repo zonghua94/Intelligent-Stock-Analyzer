@@ -3,6 +3,7 @@
 import logging
 import random
 import time
+import random
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional, List, Tuple, Dict, Any
@@ -111,7 +112,7 @@ class DataFetcherManager:
         stock_code: str,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        days: int = 200
+        days: int = 120
     ) -> Tuple[pd.DataFrame, str]:
         """
         获取日线数据（自动切换数据源）
@@ -135,7 +136,7 @@ class DataFetcherManager:
             DataFetchError: 所有数据源都失败时抛出
         """
         errors = []
-        
+        time.sleep(random.uniform(2, 5))
         for fetcher in self._fetchers:
             try:
                 logger.info(f"尝试使用 [{fetcher.name}] 获取 {stock_code}...")
@@ -301,6 +302,8 @@ class DataFetcherManager:
         # primary_quote holds the first successful result; we may supplement
         # missing fields (volume_ratio, turnover_rate, etc.) from later sources.
         primary_quote = None
+        # 随机等待 2-5 秒，以免封禁
+        time.sleep(random.uniform(2, 5))
         
         for source in source_priority:
             source = source.strip().lower()
