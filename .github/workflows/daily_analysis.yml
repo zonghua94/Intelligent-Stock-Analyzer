@@ -8,10 +8,10 @@ on:
   # 手动触发
   workflow_dispatch:
     inputs:
-      step:
-        description: 'step'
-        required: true
-        default: '0'
+      analyze_date:
+        description: 'analyze_date'
+        required: false
+        default: ''
         type: string
 
 # 并发控制：同一时间只运行一个分析任务
@@ -46,6 +46,6 @@ jobs:
       - name: 开始执行
         env:
           SERVERCHAN3_SENDKEY: ${{ secrets.SERVERCHAN3_SENDKEY }}
-          STEP: ${{ github.event.inputs.step }}
+          ANALYZE_DATE: ${{ github.event.inputs.analyze_date }}
         run: |
            python test.py

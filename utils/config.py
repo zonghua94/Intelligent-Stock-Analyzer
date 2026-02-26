@@ -55,3 +55,4 @@ class FilterArgs:
     analysis_delay: float = 0.0  # 个股分析与大盘分析之间的延迟
     max_workers: int = 3  # 低并发防封禁
     request_batch: int = 200  # 以batch方式请求，一次请求最多200只股票
+    analyze_date: Optional[str] = None
