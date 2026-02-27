@@ -219,8 +219,8 @@ class StockFilter:
     def _single_risk_filter(self, stock_data, analyzed_data):
         risk_score = 0
         # 长期偏离EMA120
-        analyzed_data['长期偏离EMA200>25%'] = (abs(stock_data['ema200_deviation_rate']) > EMA120_DEVIATION_RATE_HIGH)
-        analyzed_data['长期偏离EMA200>15%'] = (abs(stock_data['ema200_deviation_rate']) > EMA120_DEVIATION_RATE_LOW)
+        analyzed_data['长期偏离EMA200>25%'] = (abs(stock_data['ema200_deviation_rate']) > EMA200_DEVIATION_RATE_HIGH)
+        analyzed_data['长期偏离EMA200>15%'] = (abs(stock_data['ema200_deviation_rate']) > EMA200_DEVIATION_RATE_LOW)
         risk_score = risk_score + 1 if analyzed_data['长期偏离EMA200>25%'] else risk_score
         risk_score = risk_score + 1 if analyzed_data['长期偏离EMA200>15%'] else risk_score
         # 20日涨幅是否超过25%，60日涨幅是否超过50%
