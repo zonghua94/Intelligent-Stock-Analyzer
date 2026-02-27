@@ -112,7 +112,7 @@ class DataFetcherManager:
         stock_code: str,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        days: int = 120
+        days: int = 200
     ) -> Tuple[pd.DataFrame, str]:
         """
         获取日线数据（自动切换数据源）
