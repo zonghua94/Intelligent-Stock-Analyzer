@@ -14,5 +14,6 @@ if not analyze_date or len(analyze_date) == 0:
 notifier_args = NotificationArgs(serverchan3_sendkey=os.getenv("SERVERCHAN3_SENDKEY"))
 filter_args = FilterArgs(notifier_args=notifier_args, analyze_date=analyze_date)
 sf = StockFilter(filter_args)
-filtered_stock_codes = sf.process()
+sf.process()
+
 #logger.info(filtered_stock_codes)

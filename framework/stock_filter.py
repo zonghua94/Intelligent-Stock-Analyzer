@@ -11,6 +11,7 @@ import os
 
 from .data_fetch_manager import DataFetcherManager
 from .notification import NotificationService
+from .industry_analyzer import IndustryAnalyzer
 from utils.config import FilterArgs
 from utils.logger import Logger
 
@@ -51,18 +52,32 @@ class StockFilter:
         self.fetcher_manager = DataFetcherManager(args.fetcher_args)
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
         self.notifier = NotificationService(args.notifier_args)
+        self.industry_analyzer = IndustryAnalyzer(self.fetcher_manager)
     
     def process(self):
         # 开始分析
+        
         logger.info("开始筛选股票")
         stock_codes, code_infos = self.filter_stocks()
         logger.info(f"共找到 {len(stock_codes)} 只股票")
-        logger.info(f"股票信息: {code_infos.to_string()}")
-        self.get_stock_details(stock_codes, code_infos)
+        code_infos = self.industry_analyzer.get_industry_infos(stock_codes, code_infos)
         code_infos = pd.DataFrame(code_infos)
-        # logger.info(f"{self.notifier.generate_filter_report(code_infos)}")
-        self.notifier.send_filter_report(code_infos)
-        return stock_codes
+        logger.info(f"股票信息: {code_infos.to_string()}")
+        
+        #industry_analyzer_infos = self.industry_analyzer.get_industry_ranks()
+        #industry_analyzer_infos = pd.DataFrame(industry_analyzer_infos)
+        #logger.info(industry_analyzer_infos)
+        industry_analyzer_infos = []
+        self.send_report(code_infos, industry_analyzer_infos)
+        return
+
+    def send_report(self, code_infos, industry_analyzer_infos):
+        report = []
+        code_report = self.notifier.generate_filter_report(code_infos)
+        report.extend(code_report)
+        #industry_report = self.notifier.generate_industry_report(industry_analyzer_infos)
+        #report.extend(industry_report)
+        self.notifier.send_filter_report(report)
 
     def filter_stocks(self) -> List[str]:
         #stock_codes = self.base_info_filter()
@@ -122,28 +137,6 @@ class StockFilter:
         df_filtered = pd.DataFrame(all_income_data)
         df_filtered = df_filtered[df_filtered['income_inc'] >= BASE_INCOME_INCREASE]
         return df_filtered['code'].tolist()
-
-    def get_stock_details(self, code_list, analyze_infos):
-        return
-
-    def _get_industry_info(self, stock_code):
-        self.fetcher_manager.get_industry_info(stock_code)
-        #try:
-        #    # 获取个股详细信息
-        #    df = ak.stock_individual_info_em(symbol=code)
-        #    
-        #    # 查找行业相关字段
-        #    # 字段名可能是 '行业' 或 '所属行业' 或 '板块'
-        #    industry_row = df[df['item'].str.contains('行业|板块', na=False)]
-        #    
-        #    if len(industry_row) > 0:
-        #        industry = industry_row['value'].iloc[0]
-        #        return industry
-        #    else:
-        #        return "未知"
-        #except Exception as e:
-        #    print(f"查询失败：{e}")
-        #    return "查询错误"
 
     def history_info_filter(self, stock_list:List[str], report_type='short') -> List[str]:
         logger.info(f"开始处理{len(stock_list)}只股票: {stock_list}")
@@ -212,7 +205,7 @@ class StockFilter:
         stock_data['收盘>ema200'] = (stock_data['close'] > stock_data['ema200'])
         result = result and stock_data['收盘>ema200']
         # ema120斜率 >= -0.05
-        stock_data['ema200斜率>=-0.05'] = (stock_data['ema200_slop'] >= EMA120_SLOP)
+        stock_data['ema200斜率>=-0.05'] = (stock_data['ema200_slop'] >= EMA200_SLOP)
         result = result and stock_data['ema200斜率>=-0.05']
         # EMA5上穿EMA10≥1日 && 10日内EMA5/10交叉≤1次
         stock_data['EMA5上穿EMA10≥1日'] = (stock_data['gloden_cross_days'] >= GLODEN_CROSS_DAYS)

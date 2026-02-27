@@ -833,6 +833,81 @@ class AkshareFetcher(BaseFetcher):
                 return self._get_stock_realtime_quote_tencent(stock_code)
             else:
                 return self._get_stock_realtime_quote_em(stock_code)
+
+    def get_industry_info(self, stock_code: str, source: str = "em") -> Optional[UnifiedRealtimeQuote]:
+        # 检查熔断器状态
+        circuit_breaker = get_realtime_circuit_breaker()
+        source_key = f"akshare_{source}"
+        
+        if not circuit_breaker.is_available(source_key):
+            logger.warning(f"[熔断] 数据源 {source_key} 处于熔断状态，跳过")
+            return None
+        
+        return self._get_stock_industry_info_em(stock_code)
+
+    def _get_stock_industry_info_em(self, stock_code):
+        import akshare as ak
+        circuit_breaker = get_realtime_circuit_breaker()
+        source_key = "akshare_em"
+        
+        try:
+            # 检查缓存
+            current_time = time.time()
+            if (_realtime_cache['data'] is not None and 
+                current_time - _realtime_cache['timestamp'] < _realtime_cache['ttl']):
+                df = _realtime_cache['data']
+                cache_age = int(current_time - _realtime_cache['timestamp'])
+                logger.debug(f"[缓存命中] 行业信息(东财) - 缓存年龄 {cache_age}s/{_realtime_cache['ttl']}s")
+            else:
+                # 触发全量刷新
+                logger.info(f"[缓存未命中] 触发全量刷新 行业信息(东财)")
+                last_error: Optional[Exception] = None
+                df = None
+                for attempt in range(1, 3):
+                    try:
+                        # 防封禁策略
+                        self._set_random_user_agent()
+                        self._enforce_rate_limit()
+
+                        logger.info(f"[API调用] ak.stock_individual_info_em() 获取行业信息... (attempt {attempt}/2)")
+                        import time as _time
+                        api_start = _time.time()
+
+                        df = ak.stock_individual_info_em(symbol=stock_code)
+
+                        api_elapsed = _time.time() - api_start
+                        logger.info(f"[API返回] ak.stock_individual_info_em 成功: 返回 {len(df)} 只股票, 耗时 {api_elapsed:.2f}s")
+                        circuit_breaker.record_success(source_key)
+                        break
+                    except Exception as e:
+                        last_error = e
+                        logger.warning(f"[API错误] ak.stock_individual_info_em 获取失败 (attempt {attempt}/2): {e}")
+                        time.sleep(min(2 ** attempt, 5))
+
+                # 更新缓存：成功缓存数据；失败也缓存空数据，避免同一轮任务对同一接口反复请求
+                if df is None:
+                    logger.error(f"[API错误] ak.stock_zh_a_spot_em 最终失败: {last_error}")
+                    circuit_breaker.record_failure(source_key, str(last_error))
+                    df = pd.DataFrame()
+                _realtime_cache['data'] = df
+                _realtime_cache['timestamp'] = current_time
+                logger.info(f"[缓存更新] A股实时行情(东财) 缓存已刷新，TTL={_realtime_cache['ttl']}s")
+
+            if df is None or df.empty:
+                logger.warning(f"[实时行情] A股实时行情数据为空，跳过")
+                return None
+
+            industry = None
+            industry_row = df[df['item'].str.contains('行业|板块', na=False)]
+        
+            if len(industry_row) > 0:
+                industry = industry_row['value'].iloc[0]
+            return industry
+            
+        except Exception as e:
+            logger.error(f"[API错误] 获取汇总实时行情(东财)失败: {e}")
+            circuit_breaker.record_failure(source_key, str(e))
+            return None
     
     def _get_all_stock_realtime_quote_em(self) -> Optional[pd.DataFrame]:
         """

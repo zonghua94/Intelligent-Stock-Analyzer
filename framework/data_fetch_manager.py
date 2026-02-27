@@ -421,6 +421,64 @@ class DataFetcherManager:
         
         return None
 
+    def get_industry_info(self, stock_code: str):
+        # 获取配置的数据源优先级
+        source_priority = self.args.realtime_source_priority.split(',')
+        
+        errors = []
+        # primary_quote holds the first successful result; we may supplement
+        # missing fields (volume_ratio, turnover_rate, etc.) from later sources.
+        primary_quote = None
+        # 随机等待 2-5 秒，以免封禁
+        time.sleep(random.uniform(2, 5))
+        
+        for source in source_priority:
+            source = source.strip().lower()
+            
+            try:
+                quote = None
+                print(source)
+                if source == "efinance":    
+                    # 尝试 EfinanceFetcher
+                    for fetcher in self._fetchers:
+                        if fetcher.name == "EfinanceFetcher":
+                            if hasattr(fetcher, 'get_industry_info'):
+                                quote = fetcher.get_industry_info(stock_code)
+                            break
+                
+                elif source == "akshare_em":
+                    # 尝试 AkshareFetcher 东财数据源
+                    for fetcher in self._fetchers:
+                        if fetcher.name == "AkshareFetcher":
+                            if hasattr(fetcher, 'get_industry_info'):
+                                quote = fetcher.get_industry_info(stock_code, source="em")
+                            break
+                
+                elif source == "tushare":
+                    # 尝试 TushareFetcher（需要 Tushare Pro 积分）
+                    for fetcher in self._fetchers:
+                        if fetcher.name == "TushareFetcher":
+                            if hasattr(fetcher, 'get_industry_info'):
+                                quote = fetcher.get_industry_info(stock_code)
+                            break
+                
+                if quote is not None:
+                    return quote
+                    
+            except Exception as e:
+                error_msg = f"[{source}] 失败: {str(e)}"
+                logger.warning(error_msg)
+                errors.append(error_msg)
+                continue
+
+        # 所有数据源都失败，返回 None（降级兜底）
+        if errors:
+            logger.warning(f"[实时行情] 所有数据源均失败，降级处理: {'; '.join(errors)}")
+        else:
+            logger.warning(f"[实时行情] 无可用数据源")
+        
+        return None
+
     
     def get_realtime_quote(self, stock_code: str):
         """

@@ -346,6 +346,24 @@ class NotificationService:
         report = self.generate_filter_report(results, report_date)
         return self.send(report)
 
+    def send_filter_report(self, report, report_date=None):
+        if report_date is None:
+            report_date = datetime.now().strftime('%Y-%m-%d')
+        report_lines = [
+            f"# 📅 {report_date} 股票筛选报告",
+            "",
+            "---",
+            "",
+        ]
+        report_lines.extend(report)
+        # 底部信息（去除免责声明）
+        report_lines.extend([
+            "",
+            f"*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+        ])
+        report_str = "\n".join(report_lines)
+        self.send(report_str)
+
     def generate_filter_report(
         self,
         results: pd.DataFrame,
@@ -355,19 +373,7 @@ class NotificationService:
         Returns:
             Markdown 格式的日报内容
         """
-        if report_date is None:
-            report_date = datetime.now().strftime('%Y-%m-%d')
-
-        # 标题
-        report_lines = [
-            f"# 📅 {report_date} 股票筛选报告",
-            "",
-            f"> 共过滤出 **{len(results)}** 只股票 | 报告生成时间：{datetime.now().strftime('%H:%M:%S')}",
-            "",
-            "---",
-            "",
-        ]
-        
+        report_lines = []
         results = results.copy()
         results = results.sort_values('风险分', ascending=True).reset_index(drop=True)
         risk0_codes = results[results['风险分'] == 0]['code'].tolist()
@@ -392,14 +398,30 @@ class NotificationService:
             "---",
             "",
         ])
+        return report_lines
+
+    def generate_industry_report(
+        self,
+        results: pd.DataFrame,
+        report_date: Optional[str] = None
+    ) -> str:
+        """
+        Returns:
+            Markdown 格式的日报内容
+        """
+        report_lines = []
+        results = results.copy()
+        results = results.sort_values('总分', ascending=False).reset_index(drop=True)
         
-        # 底部信息（去除免责声明）
         report_lines.extend([
+            "## 📈 行业分析结果报告",
             "",
-            f"*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+            f"{results.to_markdown(index=False)}",
+            "",
+            "---",
+            "",
         ])
-        
-        return "\n".join(report_lines)
+        return report_lines
     
     def generate_daily_report(
         self,
