@@ -12,7 +12,7 @@ class IndustryAnalyzer:
     def get_industry_infos(self, stock_codes, code_infos):
         results = []
         for code, info in zip(stock_codes, code_infos):
-            result.append(self._get_industry_info(code, info))
+            results.append(self._get_industry_info(code, info))
         return results
 
     def _get_industry_info(self, stock_code, stock_info):
