@@ -11,25 +11,8 @@ class IndustryAnalyzer:
 
     def get_industry_infos(self, stock_codes, code_infos):
         results = []
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            # 提交任务
-            future_to_code = {
-                executor.submit(
-                    self._get_industry_info,
-                    code,
-                    info
-                ): code
-                for code, info in zip(stock_codes, code_infos)
-            }
-            # 收集结果
-            for idx, future in enumerate(as_completed(future_to_code)):
-                code = future_to_code[future]
-                try:
-                    result = future.result()
-                    results.append(result)
-
-                except Exception as e:
-                    logger.error(f"[{code}] 任务执行失败: {e}")
+        for code, info in zip(stock_codes, code_infos):
+            result.append(self._get_industry_info(code, info))
         return results
 
     def _get_industry_info(self, stock_code, stock_info):
