@@ -437,7 +437,6 @@ class DataFetcherManager:
             
             try:
                 quote = None
-                print(source)
                 if source == "efinance":    
                     # 尝试 EfinanceFetcher
                     for fetcher in self._fetchers:

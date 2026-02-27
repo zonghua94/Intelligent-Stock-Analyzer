@@ -56,17 +56,12 @@ class StockFilter:
     
     def process(self):
         # 开始分析
-        
         logger.info("开始筛选股票")
         stock_codes, code_infos = self.filter_stocks()
         logger.info(f"共找到 {len(stock_codes)} 只股票")
         code_infos = self.industry_analyzer.get_industry_infos(stock_codes, code_infos)
         code_infos = pd.DataFrame(code_infos)
         logger.info(f"股票信息: {code_infos.to_string()}")
-        
-        #industry_analyzer_infos = self.industry_analyzer.get_industry_ranks()
-        #industry_analyzer_infos = pd.DataFrame(industry_analyzer_infos)
-        #logger.info(industry_analyzer_infos)
         industry_analyzer_infos = []
         self.send_report(code_infos, industry_analyzer_infos)
         return
@@ -75,8 +70,6 @@ class StockFilter:
         report = []
         code_report = self.notifier.generate_filter_report(code_infos)
         report.extend(code_report)
-        #industry_report = self.notifier.generate_industry_report(industry_analyzer_infos)
-        #report.extend(industry_report)
         self.notifier.send_filter_report(report)
 
     def filter_stocks(self) -> List[str]:
@@ -93,7 +86,7 @@ class StockFilter:
     def base_info_filter(self) -> List[str]:
         df_all = self.fetcher_manager.get_all_realtime_quote()
         df_filtered = df_all[~df_all['name'].str.contains("ST")]
-        df_filtered = df_filtered[df_filtered['amount'] > BASE_DAILY_AMOUNT] # 单日成交额
+        #df_filtered = df_filtered[df_filtered['amount'] > BASE_DAILY_AMOUNT] # 单日成交额
         df_filtered = df_filtered[df_filtered['total_mv'] > BASE_MARKET_VALUE] # 总市值
         stock_list = df_filtered['code'].tolist()
         return stock_list
