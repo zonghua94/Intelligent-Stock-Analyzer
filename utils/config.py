@@ -45,11 +45,14 @@ class FetcherArgs:
     # - efinance/akshare_em: 东财全量接口，数据最全但容易被封
     # - tushare: Tushare Pro，需要2000积分，数据全面（付费用户可优先使用）
     realtime_source_priority: str = "tencent,akshare_sina,akshare_em,efinance"
-    
+    # 全市场行情数据源优先级（仅 efinance、akshare_em、tushare 支持全量拉取）
+    all_market_source_priority: str = "efinance,akshare_em"
+    # 业绩报告数据源优先级
+    income_source_priority: str = "efinance,akshare_em"
+
 
 @dataclass
 class FilterArgs:
-    max_workers: int = 4
     fetcher_args: FetcherArgs = field(default_factory=FetcherArgs)
     notifier_args: NotificationArgs = field(default_factory=NotificationArgs)
     analysis_delay: float = 0.0  # 个股分析与大盘分析之间的延迟

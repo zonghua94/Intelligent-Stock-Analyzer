@@ -108,11 +108,11 @@ class DataFetcherManager:
         self._fetchers.sort(key=lambda f: f.priority)
     
     def get_daily_analyzed_data(
-        self, 
+        self,
         stock_code: str,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        days: int = 200
+        days: int = 400
     ) -> Tuple[pd.DataFrame, str]:
         """
         获取日线数据（自动切换数据源）
@@ -353,72 +353,174 @@ class DataFetcherManager:
 
     def get_all_realtime_quote(self):
         """
-        获取实时行情数据（自动故障切换）
-        
+        获取全市场实时行情数据（自动故障切换 + 本地缓存兜底）
+
         故障切换策略（按配置的优先级）：
-        1. 美股：使用 YfinanceFetcher.get_realtime_quote()
-        2. EfinanceFetcher.get_realtime_quote()
-        3. AkshareFetcher.get_realtime_quote(source="em")  - 东财
-        4. AkshareFetcher.get_realtime_quote(source="sina") - 新浪
-        5. AkshareFetcher.get_realtime_quote(source="tencent") - 腾讯
-        6. 返回 None（降级兜底）
-            
+        1. EfinanceFetcher.get_all_realtime_quote()
+        2. AkshareFetcher.get_all_realtime_quote(source="em")  - 东财
+        3. TushareFetcher.get_all_realtime_quote()
+        4. 本地缓存兜底（24小时有效）
+
         Returns:
-            pd.DataFrame 对象，所有数据源都失败则返回 None
+            pd.DataFrame 对象，所有数据源和缓存都失败则返回 None
         """
-        # 获取配置的数据源优先级
-        source_priority = self.args.realtime_source_priority.split(',')
-        
+        from utils.cache import save_cache, load_cache
+
+        CACHE_NAME = "all_realtime_quote"
+        source_priority = self.args.all_market_source_priority.split(',')
+
         errors = []
-        # primary_quote holds the first successful result; we may supplement
-        # missing fields (volume_ratio, turnover_rate, etc.) from later sources.
-        primary_quote = None
-        
+
         for source in source_priority:
             source = source.strip().lower()
-            
+
             try:
                 quote = None
-                print(source)
-                if source == "efinance":    
-                    # 尝试 EfinanceFetcher
+                if source == "efinance":
                     for fetcher in self._fetchers:
                         if fetcher.name == "EfinanceFetcher":
                             if hasattr(fetcher, 'get_all_realtime_quote'):
                                 quote = fetcher.get_all_realtime_quote()
                             break
-                
+
                 elif source == "akshare_em":
-                    # 尝试 AkshareFetcher 东财数据源
                     for fetcher in self._fetchers:
                         if fetcher.name == "AkshareFetcher":
                             if hasattr(fetcher, 'get_all_realtime_quote'):
                                 quote = fetcher.get_all_realtime_quote(source="em")
                             break
-                
+
                 elif source == "tushare":
-                    # 尝试 TushareFetcher（需要 Tushare Pro 积分）
                     for fetcher in self._fetchers:
                         if fetcher.name == "TushareFetcher":
                             if hasattr(fetcher, 'get_all_realtime_quote'):
                                 quote = fetcher.get_all_realtime_quote()
                             break
-                
+
                 if quote is not None:
+                    save_cache(CACHE_NAME, quote)
                     return quote
-                    
+
             except Exception as e:
                 error_msg = f"[{source}] 失败: {str(e)}"
                 logger.warning(error_msg)
                 errors.append(error_msg)
                 continue
 
-        # 所有数据源都失败，返回 None（降级兜底）
-        if errors:
-            logger.warning(f"[实时行情] 所有数据源均失败，降级处理: {'; '.join(errors)}")
+        # 所有在线数据源失败，尝试本地缓存兜底（两级降级）
+        logger.warning(f"[全市场行情] 所有在线数据源均失败，尝试本地缓存兜底")
+        cached = load_cache(CACHE_NAME, max_age_hours=24.0)
+        if cached is not None:
+            logger.info(f"[全市场行情] 使用本地缓存数据（{len(cached)} 条，24h内）")
+            return cached
+
+        stale_cached = load_cache(CACHE_NAME, max_age_hours=24.0, allow_stale=True, stale_max_age_hours=72.0)
+        if stale_cached is not None:
+            logger.warning(f"[全市场行情] 使用过期缓存数据（{len(stale_cached)} 条），数据可能不准确")
+            return stale_cached
+
+        logger.error(f"[全市场行情] 所有数据源和本地缓存均不可用")
+        return None
+
+    def get_all_stock_list(self) -> 'Optional[pd.DataFrame]':
+        """
+        获取全市场股票代码+名称列表（轻量级兜底）
+
+        当 get_all_realtime_quote 不可用时，提供仅含 code/name 的股票列表，
+        遍历所有实现了 get_stock_list() 的数据源。
+
+        Returns:
+            pd.DataFrame with columns ['code', 'name']，全部失败返回 None
+        """
+        for fetcher in self._fetchers:
+            if hasattr(fetcher, 'get_stock_list'):
+                try:
+                    stock_list = fetcher.get_stock_list()
+                    if stock_list is not None and not stock_list.empty:
+                        logger.info(f"[股票列表] 从 {fetcher.name} 获取成功，共 {len(stock_list)} 条")
+                        return stock_list
+                except Exception as e:
+                    logger.warning(f"[股票列表] {fetcher.name} 获取失败: {e}")
+                    continue
+
+        logger.error("[股票列表] 所有数据源均不可用")
+        return None
+
+    @staticmethod
+    def _get_latest_quarter_date() -> str:
+        now = datetime.now()
+        month, year = now.month, now.year
+        if month <= 4:
+            return f"{year - 1}0930"
+        elif month <= 8:
+            return f"{year}0331"
+        elif month <= 10:
+            return f"{year}0630"
         else:
-            logger.warning(f"[实时行情] 无可用数据源")
-        
+            return f"{year}0930"
+
+    @staticmethod
+    def _get_previous_quarter_date(current_quarter: str) -> str:
+        """根据当前季报日期返回上一季度日期"""
+        year = int(current_quarter[:4])
+        mmdd = current_quarter[4:]
+        quarter_cycle = ['0331', '0630', '0930', '1231']
+        idx = quarter_cycle.index(mmdd)
+        if idx == 0:
+            return f"{year - 1}1231"
+        return f"{year}{quarter_cycle[idx - 1]}"
+
+    def get_batch_income_data(self, date: str = None) -> Optional[pd.DataFrame]:
+        from utils.cache import save_cache, load_cache
+
+        if date is None:
+            date = self._get_latest_quarter_date()
+
+        cache_name = f"batch_income_{date}"
+
+        cached = load_cache(cache_name, max_age_hours=24.0)
+        if cached is not None:
+            return cached
+
+        source_priority = self.args.income_source_priority.split(',')
+        errors = []
+
+        for source in source_priority:
+            source = source.strip().lower()
+            try:
+                df = None
+                if source == "efinance":
+                    for fetcher in self._fetchers:
+                        if fetcher.name == "EfinanceFetcher":
+                            if hasattr(fetcher, 'get_batch_income_data'):
+                                ef_date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+                                df = fetcher.get_batch_income_data(ef_date)
+                            break
+                elif source == "akshare_em":
+                    for fetcher in self._fetchers:
+                        if fetcher.name == "AkshareFetcher":
+                            if hasattr(fetcher, 'get_batch_income_data'):
+                                df = fetcher.get_batch_income_data(date)
+                            break
+
+                if df is not None and not df.empty:
+                    save_cache(cache_name, df)
+                    logger.info(f"[批量业绩] 获取成功（{source}），共 {len(df)} 条")
+                    return df
+
+            except Exception as e:
+                error_msg = f"[{source}] 批量业绩获取失败: {str(e)}"
+                logger.warning(error_msg)
+                errors.append(error_msg)
+                continue
+
+        logger.warning(f"[批量业绩] 所有在线数据源均失败，尝试本地缓存兜底")
+        stale_cached = load_cache(cache_name, max_age_hours=24.0, allow_stale=True, stale_max_age_hours=72.0)
+        if stale_cached is not None:
+            logger.warning(f"[批量业绩] 使用过期缓存数据（{len(stale_cached)} 条）")
+            return stale_cached
+
+        logger.error(f"[批量业绩] 所有数据源和本地缓存均不可用")
         return None
 
     def get_industry_info(self, stock_code: str):
@@ -838,6 +940,43 @@ class DataFetcherManager:
                 logger.warning(f"[{fetcher.name}] 获取市场统计失败: {e}")
                 continue
         return {}
+
+    def get_sector_stock_mapping(self) -> 'Optional[Dict]':
+        """获取行业板块→成分股映射（带 JSON 文件缓存）"""
+        import json
+        import os
+
+        cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, "sector_stock_mapping.json")
+
+        if os.path.exists(cache_file):
+            try:
+                import time as _time
+                age_hours = (_time.time() - os.path.getmtime(cache_file)) / 3600
+                if age_hours <= 12.0:
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        mapping = json.load(f)
+                    logger.info(f"[板块映射] 使用缓存数据（{age_hours:.1f}h）")
+                    return mapping
+            except Exception:
+                pass
+
+        for fetcher in self._fetchers:
+            if hasattr(fetcher, 'get_sector_stock_mapping'):
+                try:
+                    mapping = fetcher.get_sector_stock_mapping()
+                    if mapping:
+                        logger.info(f"[板块映射] 从 {fetcher.name} 获取成功")
+                        with open(cache_file, 'w', encoding='utf-8') as f:
+                            json.dump(mapping, f, ensure_ascii=False)
+                        return mapping
+                except Exception as e:
+                    logger.warning(f"[板块映射] {fetcher.name} 获取失败: {e}")
+                    continue
+
+        logger.warning("[板块映射] 所有数据源均不可用")
+        return None
 
     def get_sector_rankings(self, n: int = 5) -> Tuple[List[Dict], List[Dict]]:
         """获取板块涨跌榜（自动切换数据源）"""

@@ -39,7 +39,7 @@ logger = Logger(__name__)
 
 
 # === 标准化列名定义 ===
-STANDARD_COLUMNS = ['date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg']
+STANDARD_COLUMNS = ['date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg', 'turnover_rate']
 
 
 class DataFetchError(Exception):
@@ -57,21 +57,30 @@ class DataSourceUnavailableError(DataFetchError):
     pass
 
 @staticmethod
-def _calculate_metrics(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    计算技术指标
-    
-    计算指标：
-    - 20日日均成交额
-    - MA5, MA10, MA20: 移动平均线
-    - Volume_Ratio: 量比（今日成交量 / 5日平均成交量）
-    """
-    result = {}
+def _calculate_metrics(df: pd.DataFrame) -> dict:
+    """计算技术指标，返回最新一日的指标字典，数据不足时返回 None"""
     df = df.copy().sort_values("date").reset_index(drop=True)
-    # 当日, 20日成交额
+    if len(df) < 61:
+        return None
+
+    result = {}
     result['amount'] = df['amount'].iloc[-1]
-    result['amount_ma20'] = df['amount'].rolling(window=20).mean().iloc[-1]
-    # ema5, ema10, ema50, ema120
+    amount_ma20 = df['amount'].rolling(window=20).mean()
+    result['amount_ma20'] = amount_ma20.iloc[-1]
+
+    # 近5日内是否有放量日（成交额 >= 1.3 × 20日均值）
+    amount_5d = df['amount'].iloc[-5:]
+    amount_ma20_5d = amount_ma20.iloc[-5:]
+    result['has_volume_expansion_5d'] = bool((amount_5d >= amount_ma20_5d * 1.3).any())
+
+    # 换手率（如果数据源提供）
+    if 'turnover_rate' in df.columns and df['turnover_rate'].notna().any():
+        result['turnover_rate'] = float(df['turnover_rate'].iloc[-1])
+        result['turnover_rate_ma5'] = float(df['turnover_rate'].rolling(window=5).mean().iloc[-1])
+    else:
+        result['turnover_rate'] = None
+        result['turnover_rate_ma5'] = None
+
     ema5 = df['close'].ewm(span=5, adjust=False).mean()
     ema10 = df['close'].ewm(span=10, adjust=False).mean()
     ema50 = df['close'].ewm(span=50, adjust=False).mean()
@@ -81,57 +90,46 @@ def _calculate_metrics(df: pd.DataFrame) -> pd.DataFrame:
     result['ema10'] = ema10.iloc[-1]
     result['ema50'] = ema50.iloc[-1]
     result['ema200'] = ema200.iloc[-1]
-    # ema120斜率
-    result['ema200_slop'] = (ema200.iloc[-1] - ema200.iloc[-2]) / ema200.iloc[-2] * 100
-    # ema5 上穿 ema10的金叉, 下穿的死叉
+    result['ema200_slope'] = (ema200.iloc[-1] - ema200.iloc[-5]) / ema200.iloc[-5] * 100
+
     is_golden_cross = ((ema5 > ema10) & (ema5.shift(1) <= ema10.shift(1)))
     is_death_cross = ((ema5 < ema10) & (ema5.shift(1) >= ema10.shift(1)))
-    # 金叉间隔交易日期
     cross_days = df[is_golden_cross].index.tolist()
-    gloden_cross_days = -1
+    golden_cross_days = -1
     if len(cross_days) > 0:
-        gloden_cross_days = len(df) - 1 - cross_days[-1]
-    result['gloden_cross_days'] = gloden_cross_days
-    # 10个交易日内金死叉交叉次数
+        golden_cross_days = len(df) - 1 - cross_days[-1]
+    result['golden_cross_days'] = golden_cross_days
+
     is_cross = (is_golden_cross | is_death_cross).astype(int)
     cross_count = is_cross.iloc[-10:].sum() if len(df) >= 10 else is_cross.sum()
     result['cross_count_10d'] = cross_count
-    # macd
-    macd_calc = MACD(
-        close=df["close"],
-        window_fast=12,   # 快线周期
-        window_slow=26,   # 慢线周期
-        window_sign=9     # 信号线周期
-    )
-    macd_histogram = macd_calc.macd_diff() # Histogram = DIF - DEA
+
+    macd_calc = MACD(close=df["close"], window_fast=12, window_slow=26, window_sign=9)
+    macd_histogram = macd_calc.macd_diff()
     result['macd_histogram'] = float(macd_histogram.iloc[-1])
-    # ema120偏离比例
     result['ema200_deviation_rate'] = ((result['ema200'] - result['close']) / result['ema200']) * 100
-    # 20日, 60日涨幅
+
+    # EMA50 支撑位检测
+    result['ema50_deviation'] = (result['close'] - result['ema50']) / result['ema50'] * 100
+    result['near_support'] = abs(result['ema50_deviation']) <= 5
+
     current_price = df["close"].iloc[-1]
     price_20d_ago = df["close"].iloc[-21]
     price_60d_ago = df["close"].iloc[-61]
     result['20d_inc'] = ((current_price - price_20d_ago) / price_20d_ago) * 100
     result['60d_inc'] = ((current_price - price_60d_ago) / price_60d_ago) * 100
-    # ATR/收盘价比值
-    current_price = df["close"].iloc[-1]
-    atr_calculator = AverageTrueRange(
-        high=df["high"],
-        low=df["low"],
-        close=df["close"],
-        window=14
-    )
+
+    atr_calculator = AverageTrueRange(high=df["high"], low=df["low"], close=df["close"], window=14)
     atr = atr_calculator.average_true_range().iloc[-1]
-    atr_ratio = (float(atr) / float(current_price)) * 100
-    result['atr_rate'] = atr_ratio
-    # 连续2日布林带%B
+    result['atr_rate'] = (float(atr) / float(current_price)) * 100
+
     bb = BollingerBands(close=df["close"], window=20, window_dev=2)
-    bb_high = bb.bollinger_hband()   # 上轨
-    bb_mid = bb.bollinger_mavg()     # 中轨（20日SMA）
-    bb_low = bb.bollinger_lband()    # 下轨
-    bb_percent_b = (df["close"] - bb_low) / (bb_high - bb_low).iloc[-2:]
-    result['bb_percent_b1'] = bb_percent_b.iloc[-1]
-    result['bb_percent_b2'] = bb_percent_b.iloc[-2]
+    bb_high = bb.bollinger_hband()
+    bb_low = bb.bollinger_lband()
+    bb_width = bb_high - bb_low
+    bb_percent_b_series = (df["close"] - bb_low) / bb_width
+    result['bb_percent_b1'] = float(bb_percent_b_series.iloc[-1])
+    result['bb_percent_b2'] = float(bb_percent_b_series.iloc[-2])
     return result
 
 class BaseFetcher(ABC):

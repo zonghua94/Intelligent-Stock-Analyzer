@@ -414,6 +414,7 @@ class EfinanceFetcher(BaseFetcher):
             '成交量': 'volume',
             '成交额': 'amount',
             '涨跌幅': 'pct_chg',
+            '换手率': 'turnover_rate',
             '股票代码': 'code',
             '股票名称': 'name',
             # ETF 基金可能的列名
@@ -524,55 +525,81 @@ class EfinanceFetcher(BaseFetcher):
             circuit_breaker.record_failure(source_key, str(e))
             return None
 
-    def get_industry_info(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
+    def get_batch_income_data(self, date: str) -> Optional[pd.DataFrame]:
         import efinance as ef
         circuit_breaker = get_realtime_circuit_breaker()
         source_key = "efinance"
-        
-        # 检查熔断器状态
+
         if not circuit_breaker.is_available(source_key):
             logger.warning(f"[熔断] 数据源 {source_key} 处于熔断状态，跳过")
             return None
-        
+
         try:
-            # 检查缓存
-            current_time = time.time()
-            if (_realtime_cache['data'] is not None and 
-                current_time - _realtime_cache['timestamp'] < _realtime_cache['ttl']):
-                df = _realtime_cache['data']
-                cache_age = int(current_time - _realtime_cache['timestamp'])
-                logger.debug(f"[缓存命中] 实时行情(efinance) - 缓存年龄 {cache_age}s/{_realtime_cache['ttl']}s")
-            else:
-                # 触发全量刷新
-                logger.info(f"[缓存未命中] 触发全量刷新 实时行情(efinance)")
-                # 防封禁策略
-                self._set_random_user_agent()
-                self._enforce_rate_limit()
-                
-                logger.info(f"[API调用] ef.stock.get_belong_board() 获取实时行情...")
-                import time as _time
-                api_start = _time.time()
-                
-                # efinance 的实时行情 API
-                df = ef.stock.get_belong_board(stock_code)
-                
-                api_elapsed = _time.time() - api_start
-                logger.info(f"[API返回] ef.stock.get_belong_board 成功: 返回 {len(df)} 只股票, 耗时 {api_elapsed:.2f}s")
-                circuit_breaker.record_success(source_key)
-                
-                # 更新缓存
-                _realtime_cache['data'] = df
-                _realtime_cache['timestamp'] = current_time
-                logger.info(f"[缓存更新] 实时行情(efinance) 缓存已刷新，TTL={_realtime_cache['ttl']}s")
-            
+            self._set_random_user_agent()
+            self._enforce_rate_limit()
+
+            logger.info(f"[API调用] ef.stock.get_all_company_performance('{date}') 获取全市场业绩...")
+            import time as _time
+            api_start = _time.time()
+
+            df = ef.stock.get_all_company_performance(date)
+
+            api_elapsed = _time.time() - api_start
+            logger.info(f"[API返回] get_all_company_performance 成功: {len(df)} 条, 耗时 {api_elapsed:.2f}s")
+            circuit_breaker.record_success(source_key)
+
             if df is None or df.empty:
-                logger.warning(f"[实时行情] A股实时行情数据为空，跳过")
+                return None
+
+            code_col = '股票代码' if '股票代码' in df.columns else 'code'
+            inc_col = '营业收入同比增长' if '营业收入同比增长' in df.columns else None
+            if inc_col is None:
+                for col in df.columns:
+                    if '营业' in col and '同比' in col and '增长' in col:
+                        inc_col = col
+                        break
+            if inc_col is None:
+                logger.error(f"[efinance] 未找到营业收入同比增长列，可用列: {df.columns.tolist()}")
+                return None
+
+            result = pd.DataFrame({
+                'code': df[code_col].astype(str),
+                'income_inc': pd.to_numeric(df[inc_col], errors='coerce'),
+            })
+            return result.dropna(subset=['income_inc'])
+
+        except Exception as e:
+            logger.error(f"[API错误] 获取全市场业绩(efinance)失败: {e}")
+            circuit_breaker.record_failure(source_key, str(e))
+            return None
+
+    def get_industry_info(self, stock_code: str) -> Optional[str]:
+        import efinance as ef
+        circuit_breaker = get_realtime_circuit_breaker()
+        source_key = "efinance"
+
+        if not circuit_breaker.is_available(source_key):
+            logger.warning(f"[熔断] 数据源 {source_key} 处于熔断状态，跳过")
+            return None
+
+        try:
+            self._set_random_user_agent()
+            self._enforce_rate_limit()
+
+            import time as _time
+            api_start = _time.time()
+            df = ef.stock.get_belong_board(stock_code)
+            api_elapsed = _time.time() - api_start
+            logger.info(f"[API返回] ef.stock.get_belong_board({stock_code}) 成功: {len(df)} 条, 耗时 {api_elapsed:.2f}s")
+            circuit_breaker.record_success(source_key)
+
+            if df is None or df.empty:
                 return None
             industry = df.iloc[0]['板块名称']
             return industry
-            
+
         except Exception as e:
-            logger.error(f"[API错误] 获取 {stock_code} 实时行情(efinance)失败: {e}")
+            logger.error(f"[API错误] 获取 {stock_code} 板块信息(efinance)失败: {e}")
             circuit_breaker.record_failure(source_key, str(e))
             return None
     

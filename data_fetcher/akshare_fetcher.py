@@ -671,6 +671,7 @@ class AkshareFetcher(BaseFetcher):
             '成交量': 'volume',
             '成交额': 'amount',
             '涨跌幅': 'pct_chg',
+            '换手率': 'turnover_rate',
         }
         
         # 重命名列
@@ -685,6 +686,18 @@ class AkshareFetcher(BaseFetcher):
         df = df[existing_cols]
         
         return df
+
+    def get_stock_list(self) -> Optional[pd.DataFrame]:
+        try:
+            import akshare as ak
+            df = ak.stock_info_a_code_name()
+            if df is not None and not df.empty:
+                df = df.rename(columns={'code': 'code', 'name': 'name'})
+                logger.info(f"akshare 获取股票列表成功: {len(df)} 条")
+                return df[['code', 'name']]
+        except Exception as e:
+            logger.warning(f"akshare 获取股票列表失败: {e}")
+        return None
 
     def get_all_realtime_quote(self, source: str = "em") -> Optional[pd.DataFrame]:
         """
@@ -792,6 +805,63 @@ class AkshareFetcher(BaseFetcher):
             circuit_breaker.record_failure(source_key, str(e))
             return None
     
+    def get_batch_income_data(self, date: str) -> Optional[pd.DataFrame]:
+        circuit_breaker = get_realtime_circuit_breaker()
+        source_key = "akshare_em"
+
+        if not circuit_breaker.is_available(source_key):
+            logger.warning(f"[熔断] 数据源 {source_key} 处于熔断状态，跳过")
+            return None
+
+        try:
+            self._set_random_user_agent()
+            self._enforce_rate_limit()
+
+            logger.info(f"[API调用] stock_yjbb_em(date='{date}') 获取全市场业绩...")
+            import time as _time
+            api_start = _time.time()
+
+            df = None
+            try:
+                from akshare.stock_feature.stock_yjbb_em import stock_yjbb_em
+                df = stock_yjbb_em(date=date)
+            except (ImportError, AttributeError):
+                import akshare as ak
+                df = ak.stock_yjbb_em(date=date)
+
+            api_elapsed = _time.time() - api_start
+            logger.info(f"[API返回] stock_yjbb_em 成功: {len(df)} 条, 耗时 {api_elapsed:.2f}s")
+            circuit_breaker.record_success(source_key)
+
+            if df is None or df.empty:
+                return None
+
+            code_col = '股票代码' if '股票代码' in df.columns else 'code'
+            inc_col = None
+            for col in df.columns:
+                if '营业总收入' in col and '同比' in col:
+                    inc_col = col
+                    break
+            if inc_col is None:
+                for col in df.columns:
+                    if '营业' in col and '同比' in col and '增长' in col:
+                        inc_col = col
+                        break
+            if inc_col is None:
+                logger.error(f"[akshare] 未找到营业收入同比增长列，可用列: {df.columns.tolist()}")
+                return None
+
+            result = pd.DataFrame({
+                'code': df[code_col].astype(str),
+                'income_inc': pd.to_numeric(df[inc_col], errors='coerce'),
+            })
+            return result.dropna(subset=['income_inc'])
+
+        except Exception as e:
+            logger.error(f"[API错误] 获取全市场业绩(akshare)失败: {e}")
+            circuit_breaker.record_failure(source_key, str(e))
+            return None
+
     def get_realtime_quote(self, stock_code: str, source: str = "em") -> Optional[UnifiedRealtimeQuote]:
         """
         获取实时行情数据（支持多数据源）
@@ -849,63 +919,28 @@ class AkshareFetcher(BaseFetcher):
         import akshare as ak
         circuit_breaker = get_realtime_circuit_breaker()
         source_key = "akshare_em"
-        
+
         try:
-            # 检查缓存
-            current_time = time.time()
-            if (_realtime_cache['data'] is not None and 
-                current_time - _realtime_cache['timestamp'] < _realtime_cache['ttl']):
-                df = _realtime_cache['data']
-                cache_age = int(current_time - _realtime_cache['timestamp'])
-                logger.debug(f"[缓存命中] 行业信息(东财) - 缓存年龄 {cache_age}s/{_realtime_cache['ttl']}s")
-            else:
-                # 触发全量刷新
-                logger.info(f"[缓存未命中] 触发全量刷新 行业信息(东财)")
-                last_error: Optional[Exception] = None
-                df = None
-                for attempt in range(1, 3):
-                    try:
-                        # 防封禁策略
-                        self._set_random_user_agent()
-                        self._enforce_rate_limit()
+            self._set_random_user_agent()
+            self._enforce_rate_limit()
 
-                        logger.info(f"[API调用] ak.stock_individual_info_em() 获取行业信息... (attempt {attempt}/2)")
-                        import time as _time
-                        api_start = _time.time()
-
-                        df = ak.stock_individual_info_em(symbol=stock_code)
-
-                        api_elapsed = _time.time() - api_start
-                        logger.info(f"[API返回] ak.stock_individual_info_em 成功: 返回 {len(df)} 只股票, 耗时 {api_elapsed:.2f}s")
-                        circuit_breaker.record_success(source_key)
-                        break
-                    except Exception as e:
-                        last_error = e
-                        logger.warning(f"[API错误] ak.stock_individual_info_em 获取失败 (attempt {attempt}/2): {e}")
-                        time.sleep(min(2 ** attempt, 5))
-
-                # 更新缓存：成功缓存数据；失败也缓存空数据，避免同一轮任务对同一接口反复请求
-                if df is None:
-                    logger.error(f"[API错误] ak.stock_zh_a_spot_em 最终失败: {last_error}")
-                    circuit_breaker.record_failure(source_key, str(last_error))
-                    df = pd.DataFrame()
-                _realtime_cache['data'] = df
-                _realtime_cache['timestamp'] = current_time
-                logger.info(f"[缓存更新] A股实时行情(东财) 缓存已刷新，TTL={_realtime_cache['ttl']}s")
+            import time as _time
+            api_start = _time.time()
+            df = ak.stock_individual_info_em(symbol=stock_code)
+            api_elapsed = _time.time() - api_start
+            logger.info(f"[API返回] ak.stock_individual_info_em({stock_code}) 成功: {len(df)} 条, 耗时 {api_elapsed:.2f}s")
+            circuit_breaker.record_success(source_key)
 
             if df is None or df.empty:
-                logger.warning(f"[实时行情] A股实时行情数据为空，跳过")
                 return None
 
-            industry = None
             industry_row = df[df['item'].str.contains('行业|板块', na=False)]
-        
             if len(industry_row) > 0:
-                industry = industry_row['value'].iloc[0]
-            return industry
-            
+                return industry_row['value'].iloc[0]
+            return None
+
         except Exception as e:
-            logger.error(f"[API错误] 获取汇总实时行情(东财)失败: {e}")
+            logger.error(f"[API错误] 获取 {stock_code} 行业信息(东财)失败: {e}")
             circuit_breaker.record_failure(source_key, str(e))
             return None
     
@@ -1702,6 +1737,52 @@ class AkshareFetcher(BaseFetcher):
             df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce')
             stats['total_amount'] = df[amount_col].sum() / 1e8
         return stats
+
+    def get_sector_stock_mapping(self) -> Optional[Dict]:
+        """
+        获取全市场行业板块→成分股映射（新浪数据源）
+
+        Returns:
+            {
+                'sectors': [{'name': str, 'label': str, 'change_pct': float}, ...],
+                'stock_to_sector': {stock_code: sector_name, ...}
+            }
+            失败返回 None
+        """
+        import akshare as ak
+        try:
+            self._set_random_user_agent()
+            self._enforce_rate_limit()
+
+            logger.info("[API调用] ak.stock_sector_spot() 获取行业板块列表...")
+            df_sectors = ak.stock_sector_spot(indicator='新浪行业')
+            if df_sectors is None or df_sectors.empty:
+                return None
+
+            df_sectors['涨跌幅'] = pd.to_numeric(df_sectors['涨跌幅'], errors='coerce')
+            sectors = []
+            stock_to_sector = {}
+
+            for _, row in df_sectors.iterrows():
+                label = row['label']
+                name = row['板块']
+                change_pct = float(row['涨跌幅']) if pd.notna(row['涨跌幅']) else 0.0
+                sectors.append({'name': name, 'label': label, 'change_pct': change_pct})
+
+                try:
+                    df_detail = ak.stock_sector_detail(sector=label)
+                    if df_detail is not None and not df_detail.empty:
+                        for code in df_detail['code'].astype(str):
+                            stock_to_sector[code] = name
+                except Exception:
+                    continue
+
+            logger.info(f"[板块映射] 共 {len(sectors)} 个板块，覆盖 {len(stock_to_sector)} 只股票")
+            return {'sectors': sectors, 'stock_to_sector': stock_to_sector}
+
+        except Exception as e:
+            logger.warning(f"[Akshare] 获取板块映射失败: {e}")
+            return None
 
     def get_sector_rankings(self, n: int = 5) -> Optional[Tuple[List[Dict], List[Dict]]]:
         """
