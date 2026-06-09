@@ -77,9 +77,18 @@ def _calculate_metrics(df: pd.DataFrame) -> dict:
     if 'turnover_rate' in df.columns and df['turnover_rate'].notna().any():
         result['turnover_rate'] = float(df['turnover_rate'].iloc[-1])
         result['turnover_rate_ma5'] = float(df['turnover_rate'].rolling(window=5).mean().iloc[-1])
+        result['turnover_rate_max5'] = float(df['turnover_rate'].iloc[-5:].max())
     else:
         result['turnover_rate'] = None
         result['turnover_rate_ma5'] = None
+        result['turnover_rate_max5'] = None
+
+    # 量价背离检测：近5日价格接近20日高点，但成交量萎缩
+    price_20d_high = df['close'].iloc[-20:].max()
+    price_near_high = bool((df['close'].iloc[-5:] >= price_20d_high * 0.98).any())
+    vol_ma5 = df['volume'].iloc[-5:].mean()
+    vol_ma10 = df['volume'].iloc[-10:].mean()
+    result['volume_price_divergence'] = bool(price_near_high and vol_ma5 < vol_ma10 * 0.8)
 
     ema5 = df['close'].ewm(span=5, adjust=False).mean()
     ema10 = df['close'].ewm(span=10, adjust=False).mean()

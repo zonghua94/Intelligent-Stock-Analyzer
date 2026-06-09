@@ -28,6 +28,7 @@ GOLDEN_CROSS_DAYS = 1
 CROSS_COUNT_10D = 1
 MACD_HISTOGRAM = 0
 MIN_TURNOVER_RATE_MA5 = 1.0
+MAX_TURNOVER_RATE_5D = 15.0
 
 EMA200_DEVIATION_MODERATE = 20
 EMA200_DEVIATION_EXTREME = 35
@@ -61,6 +62,8 @@ class StockFilter:
     def process(self):
         logger.info("开始筛选股票")
         self._sector_cache = {}
+        self._funnel_stats = {}
+        self._market_env = None
         stock_codes, code_infos = self.filter_stocks()
         logger.info(f"共找到 {len(stock_codes)} 只股票")
         code_infos = self.industry_analyzer.get_industry_infos(stock_codes, code_infos, sector_cache=self._sector_cache)
@@ -74,10 +77,38 @@ class StockFilter:
         report = []
         code_report = self.notifier.generate_filter_report(code_infos)
         report.extend(code_report)
-        self.notifier.send_filter_report(report)
+        self.notifier.send_filter_report(
+            report,
+            market_env=self._market_env,
+            funnel_stats=self._funnel_stats,
+        )
+
+    def market_env_filter(self) -> bool:
+        """大盘环境过滤：检查指数是否在EMA20之上"""
+        if not self.args.enable_market_env_filter:
+            return True
+
+        result = self.fetcher_manager.get_index_ema_status(
+            index_code=self.args.market_index_code, ema_period=20)
+        if result is None:
+            logger.warning("market_env_filter: 无法获取大盘数据，默认继续筛选")
+            return True
+
+        self._market_env = result
+        is_above = result['is_above_ema']
+        status = '站上EMA20' if is_above else '跌破EMA20'
+        logger.info(f"market_env_filter: {result['index_name']} 当前 {result['current_price']:.2f}, "
+                    f"EMA20 {result['ema_value']:.2f}, {status}")
+        return is_above
 
     def filter_stocks(self) -> List[str]:
+        market_ok = self.market_env_filter()
+        if not market_ok:
+            logger.warning("大盘环境不佳（指数在EMA20下方），本次跳过筛选")
+            return [], []
+
         stock_codes = self.base_info_filter()
+        self._funnel_stats['base_info'] = len(stock_codes)
         logger.info(f"base_info_filter return size: {len(stock_codes)}")
 
         if not stock_codes:
@@ -85,12 +116,15 @@ class StockFilter:
             return [], []
 
         stock_codes = self.income_filter(stock_codes)
+        self._funnel_stats['income'] = len(stock_codes)
         logger.info(f"income_filter return size: {len(stock_codes)}")
 
         stock_codes = self.sector_filter(stock_codes)
+        self._funnel_stats['sector'] = len(stock_codes)
         logger.info(f"sector_filter return size: {len(stock_codes)}")
 
         stock_codes, code_infos = self.history_info_filter(stock_codes)
+        self._funnel_stats['technical'] = len(stock_codes)
         logger.info(f"history_info_filter return size: {len(stock_codes)}")
         return stock_codes, code_infos
 
@@ -159,7 +193,7 @@ class StockFilter:
         weak_threshold = sorted_sectors[weak_count - 1]['change_pct']
         weak_sectors = {s['name'] for s in sorted_sectors[:weak_count]}
 
-        logger.info(f"sector_filter: 弱势板块阈值 {weak_threshold:.2f}%，共 {len(weak_sectors)} 个: {weak_sectors}")
+        logger.info(f"sector_filter: 弱势板块阈值(5日) {weak_threshold:.2f}%，共 {len(weak_sectors)} 个: {weak_sectors}")
 
         sector_count = {}
         result = []
@@ -288,6 +322,11 @@ class StockFilter:
         analyzed_data['布林带%B连续2日>0.9'] = (stock_data['bb_percent_b1'] is not None and stock_data['bb_percent_b1'] > BOLL_PCT_B and \
             stock_data['bb_percent_b2'] is not None and stock_data['bb_percent_b2'] > BOLL_PCT_B)
         risk_score = risk_score + 1 if analyzed_data['布林带%B连续2日>0.9'] else risk_score
+        analyzed_data['量价背离'] = stock_data.get('volume_price_divergence', False)
+        risk_score = risk_score + 1 if analyzed_data['量价背离'] else risk_score
+        tr_max5 = stock_data.get('turnover_rate_max5')
+        analyzed_data['5日换手率过高'] = tr_max5 is not None and tr_max5 > MAX_TURNOVER_RATE_5D
+        risk_score = risk_score + 1 if analyzed_data['5日换手率过高'] else risk_score
         analyzed_data['风险分'] = risk_score
         return risk_score <= RISK_SCORE_THRESHOLD
 

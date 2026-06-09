@@ -59,3 +59,5 @@ class FilterArgs:
     max_workers: int = 3  # 低并发防封禁
     request_batch: int = 200  # 以batch方式请求，一次请求最多200只股票
     analyze_date: Optional[str] = None
+    market_index_code: str = '000300'
+    enable_market_env_filter: bool = True

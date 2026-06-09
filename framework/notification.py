@@ -342,21 +342,55 @@ class NotificationService:
         """
         return self._send_via_source_context(content)
     
-    def send_filter_report(self, results: pd.DataFrame, report_date: Optional[str] = None):
-        report = self.generate_filter_report(results, report_date)
-        return self.send(report)
-
-    def send_filter_report(self, report, report_date=None):
+    def send_filter_report(self, report, report_date=None, market_env=None, funnel_stats=None):
         if report_date is None:
             report_date = datetime.now().strftime('%Y-%m-%d')
         report_lines = [
             f"# 📅 {report_date} 股票筛选报告",
             "",
-            "---",
-            "",
         ]
+
+        if market_env:
+            status = '🟢 站上EMA20（偏多）' if market_env.get('is_above_ema') else '🔴 跌破EMA20（偏空）'
+            report_lines.extend([
+                "## 🌍 大盘环境",
+                "",
+                f"- **指数**: {market_env.get('index_name', '未知')}",
+                f"- **当前价格**: {market_env.get('current_price', 0):.2f}",
+                f"- **EMA20**: {market_env.get('ema_value', 0):.2f}",
+                f"- **状态**: {status}",
+                "",
+            ])
+
+        if funnel_stats:
+            stage_labels = {
+                'base_info': '基础筛选（非ST+市值）',
+                'income': '业绩筛选（营收增速）',
+                'sector': '板块筛选（剔除弱势）',
+                'technical': '技术筛选（趋势+风险）',
+            }
+            report_lines.extend([
+                "## 🔽 筛选漏斗",
+                "",
+                "| 阶段 | 通过数量 |",
+                "|------|---------|",
+            ])
+            prev_count = None
+            for key in ['base_info', 'income', 'sector', 'technical']:
+                if key not in funnel_stats:
+                    continue
+                count = funnel_stats[key]
+                label = stage_labels.get(key, key)
+                if prev_count is not None and prev_count > 0:
+                    pct = count / prev_count * 100
+                    report_lines.append(f"| {label} | **{count}** 只（{pct:.0f}%） |")
+                else:
+                    report_lines.append(f"| {label} | **{count}** 只 |")
+                prev_count = count
+            report_lines.append("")
+
+        report_lines.extend(["---", ""])
         report_lines.extend(report)
-        # 底部信息（去除免责声明）
         report_lines.extend([
             "",
             f"*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",

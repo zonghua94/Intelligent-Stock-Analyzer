@@ -941,6 +941,68 @@ class DataFetcherManager:
                 continue
         return {}
 
+    def get_index_ema_status(self, index_code: str = '000300', ema_period: int = 20) -> Optional[Dict[str, Any]]:
+        """
+        获取指数EMA状态，判断大盘环境
+
+        Args:
+            index_code: 指数代码，默认 '000300' (沪深300)
+            ema_period: EMA周期，默认 20
+
+        Returns:
+            Dict: {'is_above_ema': bool, 'current_price': float, 'ema_value': float, 'index_name': str}
+            失败返回 None
+        """
+        import json
+        import os
+
+        cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, f"index_ema_{index_code}_{ema_period}.json")
+
+        if os.path.exists(cache_file):
+            try:
+                age_hours = (time.time() - os.path.getmtime(cache_file)) / 3600
+                if age_hours <= 4.0:
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        cached = json.load(f)
+                    logger.info(f"[指数EMA] 使用缓存数据({age_hours:.1f}h): {index_code}")
+                    return cached
+            except Exception:
+                pass
+
+        index_names = {'000300': '沪深300', '000001': '上证指数', '399001': '深证成指',
+                       '399006': '创业板指', '000016': '上证50'}
+
+        for fetcher in self._fetchers:
+            if not hasattr(fetcher, 'get_index_daily_data'):
+                continue
+            try:
+                df = fetcher.get_index_daily_data(index_code, days=60)
+                if df is None or df.empty or len(df) < ema_period:
+                    continue
+
+                ema = df['close'].ewm(span=ema_period, adjust=False).mean()
+                current_price = float(df['close'].iloc[-1])
+                ema_value = float(ema.iloc[-1])
+                result = {
+                    'is_above_ema': current_price > ema_value,
+                    'current_price': current_price,
+                    'ema_value': ema_value,
+                    'index_name': index_names.get(index_code, index_code),
+                }
+                with open(cache_file, 'w', encoding='utf-8') as f:
+                    json.dump(result, f, ensure_ascii=False)
+                logger.info(f"[指数EMA] {result['index_name']} 当前 {current_price:.2f}, "
+                            f"EMA{ema_period} {ema_value:.2f}")
+                return result
+            except Exception as e:
+                logger.warning(f"[{fetcher.name}] 获取指数EMA失败: {e}")
+                continue
+
+        logger.warning(f"[指数EMA] 所有数据源均失败: {index_code}")
+        return None
+
     def get_sector_stock_mapping(self) -> 'Optional[Dict]':
         """获取行业板块→成分股映射（带 JSON 文件缓存）"""
         import json

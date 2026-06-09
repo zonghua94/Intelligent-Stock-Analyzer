@@ -1665,6 +1665,42 @@ class AkshareFetcher(BaseFetcher):
             logger.error(f"[Akshare] 获取指数行情失败: {e}")
             return None
 
+    def get_index_daily_data(self, index_code: str = '000300', days: int = 60) -> Optional[pd.DataFrame]:
+        """
+        获取指数日线数据（东财接口）
+
+        Args:
+            index_code: 指数代码，如 '000300'(沪深300), '000001'(上证指数)
+            days: 获取天数
+
+        Returns:
+            DataFrame with columns ['date', 'close'] 等，失败返回 None
+        """
+        import akshare as ak
+        from datetime import timedelta
+
+        try:
+            self._set_random_user_agent()
+            self._enforce_rate_limit()
+
+            end_date = datetime.now().strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=days * 2)).strftime('%Y%m%d')
+
+            logger.info(f"[API调用] ak.index_zh_a_hist() 获取指数 {index_code} 日线数据...")
+            df = ak.index_zh_a_hist(symbol=index_code, period='daily', start_date=start_date, end_date=end_date)
+            if df is None or df.empty:
+                return None
+
+            df = df.rename(columns={'日期': 'date', '收盘': 'close', '开盘': 'open',
+                                    '最高': 'high', '最低': 'low', '成交量': 'volume'})
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.sort_values('date').reset_index(drop=True)
+            return df
+
+        except Exception as e:
+            logger.warning(f"[Akshare] 获取指数 {index_code} 日线数据失败: {e}")
+            return None
+
     def get_market_stats(self) -> Optional[Dict[str, Any]]:
         """
         获取市场涨跌统计
@@ -1740,7 +1776,10 @@ class AkshareFetcher(BaseFetcher):
 
     def get_sector_stock_mapping(self) -> Optional[Dict]:
         """
-        获取全市场行业板块→成分股映射（新浪数据源）
+        获取全市场行业板块→成分股映射（东财数据源，5日累计涨跌幅）
+
+        使用东财接口获取板块列表和成分股，并计算每个板块的5日累计涨跌幅
+        替代原新浪接口的单日涨跌幅，减少单日波动噪声。
 
         Returns:
             {
@@ -1750,34 +1789,62 @@ class AkshareFetcher(BaseFetcher):
             失败返回 None
         """
         import akshare as ak
+        from datetime import timedelta
+
         try:
             self._set_random_user_agent()
             self._enforce_rate_limit()
 
-            logger.info("[API调用] ak.stock_sector_spot() 获取行业板块列表...")
-            df_sectors = ak.stock_sector_spot(indicator='新浪行业')
-            if df_sectors is None or df_sectors.empty:
+            logger.info("[API调用] ak.stock_board_industry_name_em() 获取行业板块列表...")
+            df_names = ak.stock_board_industry_name_em()
+            if df_names is None or df_names.empty:
                 return None
 
-            df_sectors['涨跌幅'] = pd.to_numeric(df_sectors['涨跌幅'], errors='coerce')
+            end_date = datetime.now().strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=12)).strftime('%Y%m%d')
+
             sectors = []
             stock_to_sector = {}
+            total = len(df_names)
 
-            for _, row in df_sectors.iterrows():
-                label = row['label']
-                name = row['板块']
-                change_pct = float(row['涨跌幅']) if pd.notna(row['涨跌幅']) else 0.0
-                sectors.append({'name': name, 'label': label, 'change_pct': change_pct})
+            for idx, (_, row) in enumerate(df_names.iterrows()):
+                sector_name = row['板块名称']
+                sector_code = row['板块代码']
+                today_change = float(pd.to_numeric(row.get('涨跌幅', 0), errors='coerce') or 0)
 
+                # 获取5日累计涨跌幅
+                change_pct = today_change
                 try:
-                    df_detail = ak.stock_sector_detail(sector=label)
-                    if df_detail is not None and not df_detail.empty:
-                        for code in df_detail['code'].astype(str):
-                            stock_to_sector[code] = name
+                    self._enforce_rate_limit()
+                    df_hist = ak.stock_board_industry_hist_em(
+                        symbol=sector_name, period='日k',
+                        start_date=start_date, end_date=end_date)
+                    if df_hist is not None and len(df_hist) >= 2:
+                        recent = df_hist.tail(5)
+                        recent_chg = pd.to_numeric(recent['涨跌幅'], errors='coerce').dropna()
+                        if len(recent_chg) >= 2:
+                            change_pct = float(((1 + recent_chg / 100).prod() - 1) * 100)
+                except Exception as e:
+                    logger.debug(f"[板块5日] {sector_name} 历史数据获取失败，使用当日涨幅: {e}")
+
+                sectors.append({'name': sector_name, 'label': sector_code, 'change_pct': change_pct})
+
+                # 获取成分股
+                try:
+                    self._enforce_rate_limit()
+                    df_cons = ak.stock_board_industry_cons_em(symbol=sector_name)
+                    if df_cons is not None and not df_cons.empty:
+                        code_col = '代码' if '代码' in df_cons.columns else 'code'
+                        if code_col in df_cons.columns:
+                            for code in df_cons[code_col].astype(str):
+                                stock_to_sector[code] = sector_name
                 except Exception:
                     continue
 
-            logger.info(f"[板块映射] 共 {len(sectors)} 个板块，覆盖 {len(stock_to_sector)} 只股票")
+                if (idx + 1) % 20 == 0:
+                    logger.info(f"[板块映射] 进度 {idx + 1}/{total}")
+
+            logger.info(f"[板块映射] 共 {len(sectors)} 个板块(5日涨幅)，覆盖 {len(stock_to_sector)} 只股票")
             return {'sectors': sectors, 'stock_to_sector': stock_to_sector}
 
         except Exception as e:
