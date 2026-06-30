@@ -132,6 +132,7 @@ class StockFilter:
         df_all = self.fetcher_manager.get_all_realtime_quote()
         if df_all is not None and not df_all.empty:
             df_filtered = df_all[~df_all['name'].str.contains("ST", na=False)]
+            df_filtered['total_mv'] = pd.to_numeric(df_filtered['total_mv'], errors='coerce')
             df_filtered = df_filtered[df_filtered['total_mv'] > BASE_MARKET_VALUE]
             stock_list = df_filtered['code'].tolist()
             logger.info(f"base_info_filter: 筛选出 {len(stock_list)} 只股票（非ST，市值>{BASE_MARKET_VALUE/1e8:.0f}亿）")
